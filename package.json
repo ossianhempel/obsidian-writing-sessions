@@ -1,0 +1,28 @@
+{
+  "name": "obsidian-writing-sessions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Manual writing sessions and daily word habits for Obsidian.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node esbuild.config.mjs --watch",
+    "build": "tsc --noEmit && node esbuild.config.mjs",
+    "test": "vitest run",
+    "check": "npm run build && npm test",
+    "package": "npm run check && node scripts/package.mjs",
+    "smoke": "npm run build && node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "@codemirror/commands": "^6.10.0",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.38.0",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "jsdom": "^26.1.0",
+    "obsidian": "latest",
+    "playwright-core": "^1.65.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.1.0"
+  },
+  "type": "module"
+}

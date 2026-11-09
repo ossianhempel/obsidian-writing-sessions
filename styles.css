@@ -1,0 +1,26 @@
+.writing-sessions-status {
+  all: unset;
+  cursor: pointer;
+  border-radius: var(--radius-s);
+  padding: var(--size-2-1) var(--size-2-2);
+  font-variant-numeric: tabular-nums;
+}
+.writing-sessions-status:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.writing-sessions-status:focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: 2px; }
+.writing-sessions-modal .writing-sessions-summary {
+  padding: var(--size-4-4);
+  border: var(--border-width) solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  margin-bottom: var(--size-4-4);
+}
+.writing-sessions-modal .writing-sessions-today { font-size: var(--font-ui-large); font-weight: var(--font-semibold); margin-top: 0; }
+.writing-sessions-modal progress { width: 100%; accent-color: var(--interactive-accent); }
+.writing-sessions-modal .writing-sessions-hint,
+.writing-sessions-modal small { color: var(--text-muted); }
+.writing-sessions-modal .writing-sessions-history { max-height: 40vh; overflow-y: auto; }
+.writing-sessions-modal .writing-sessions-history-row {
+  display: grid;
+  gap: var(--size-2-2);
+  padding: var(--size-4-3) 0;
+  border-bottom: var(--border-width) solid var(--background-modifier-border);
+}
