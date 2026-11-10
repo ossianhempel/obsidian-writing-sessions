@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { mkdir, mkdtemp, copyFile, writeFile, readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -190,6 +191,18 @@ try {
   }
   assert.equal(saved.sessions.length, 2);
   assert.equal(saved.sessions[1].endedAt, null);
+  const ownershipInputs = await page.evaluate(async () => {
+    const data = app.plugins.plugins['writing-sessions'].data;
+    return Promise.all(Object.entries(data.ownership).map(async ([path, record]) => ({
+      path, digest: record.digest, marks: record.marks.length,
+      disk: await app.vault.read(app.vault.getAbstractFileByPath(path)),
+      editor: app.workspace.getLeavesOfType('markdown').find(leaf => leaf.view.file?.path === path)?.view.editor?.getValue(),
+    })));
+  });
+  console.log('Before reload ownership:', JSON.stringify(ownershipInputs.map(({ path, digest, marks, disk, editor }) => ({
+    path, marks, diskMatches: createHash('sha256').update(disk.replace(/\r\n?/g, '\n')).digest('hex') === digest,
+    editorMatches: editor === undefined ? null : createHash('sha256').update(editor.replace(/\r\n?/g, '\n')).digest('hex') === digest,
+  }))));
   // A plugin lifecycle reload exercises persisted data without terminating the
   // host before asynchronous unload has completed.
   await page.evaluate(async () => {
@@ -197,6 +210,7 @@ try {
     await app.plugins.enablePlugin('writing-sessions');
   });
   await counts(15, 21);
+  console.log('After reload ownership:', await page.evaluate(() => Object.entries(app.plugins.plugins['writing-sessions'].data.ownership).map(([path, record]) => ({ path, marks: record.marks.length }))));
   await openNote('Second note.md');
   await editor();
   await page.keyboard.press(`${mod}+a`);
