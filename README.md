@@ -31,7 +31,7 @@ Word ownership survives app restarts and plugin reloads when the note's contents
 
 Desktop Obsidian 1.15 or newer is required. The plugin is not yet in the community directory.
 
-1. Build from source below, or use a provided plugin ZIP.
+1. Download the [latest release ZIP](https://github.com/ossianhempel/obsidian-writing-sessions/releases/latest/download/writing-sessions.zip), or build from source below.
 2. Create `<your-vault>/.obsidian/plugins/writing-sessions/`.
 3. Copy `main.js`, `manifest.json`, and `styles.css` into that folder.
 4. Reload Obsidian and enable **Writing Sessions** under Community plugins.
@@ -69,4 +69,4 @@ History is per vault and currently intended for one desktop writer. Syncing the 
 
 ## License
 
-[MIT](LICENSE).
+Free and open source under the [MIT license](LICENSE).
