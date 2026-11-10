@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2 — 2026-11-10
+
+- End active sessions automatically at the 04:00 local writing-day cutoff. Require a manual start for the next day while preserving prior totals and history.
+- Close expired sessions on startup, wake, and before editor transactions, including when a cutoff timer was delayed. Record the actual cutoff time as the session end.
+
 ## 0.2.1 — 2026-11-10
 
 - Celebrate reaching the daily goal with a brief status-bar pulse, a message, and a checkmark. Respect Reduce Motion and offer a setting to disable celebrations.

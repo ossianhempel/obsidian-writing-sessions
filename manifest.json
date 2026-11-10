@@ -1,7 +1,7 @@
 {
   "id": "writing-sessions",
   "name": "Writing Sessions",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "minAppVersion": "1.15.0",
   "description": "Track writing sessions and daily word habits across notes, with a writing day that starts at 4 am.",
   "author": "Ossian Hempel",

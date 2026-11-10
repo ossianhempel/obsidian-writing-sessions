@@ -3,7 +3,7 @@ import { EditorState, StateEffect, StateField, Transaction } from '@codemirror/s
 import { EditorView } from '@codemirror/view';
 import { history, isolateHistory, undo, redo, insertNewline, copyLineDown, moveLineUp, moveLineDown, transposeChars } from '@codemirror/commands';
 import { trackingExtension, wordCount } from '../src/tracking';
-import { activeSession, applyCredit, dailyCounts, initialData, parseData, sessionCounts, writingDay, type Data } from '../src/model';
+import { activeSession, applyCredit, dailyCounts, endExpiredSession, initialData, parseData, sessionCounts, writingDay, type Data } from '../src/model';
 
 const views: EditorView[] = [];
 afterEach(() => { for (const view of views.splice(0)) view.destroy(); });
@@ -26,7 +26,7 @@ function setup(doc = '') {
   function edit(insert: string, event = 'input.type', from = view.state.doc.length, to = from) {
     view.dispatch({ changes: { from, to, insert }, annotations: [Transaction.userEvent.of(event), isolateHistory.of('full')] });
   }
-  return { data, view, open, edit, file, fileChanged, setDay: (value: string) => { day = value; }, counts: () => sessionCounts(data.sessions[0]) };
+  return { data, view, open, edit, file, fileChanged, setDay: (value: string) => { day = value; endExpiredSession(data, new Date(`${value}T04:00:00`)); }, counts: () => sessionCounts(data.sessions[0]) };
 }
 
 describe('writing credit through editor transactions and real undo history', () => {
@@ -400,15 +400,16 @@ describe('writing credit through editor transactions and real undo history', () 
     app.edit('', 'delete.backward', 5, 16);
     expect(app.counts()).toEqual({ added: 1, net: 1 });
   });
-  it('removes credit from its original writing day across the 04:00 cutoff', () => {
+  it('stops credit at 04:00 and leaves prior-session words unchanged by later deletion', () => {
     const app = setup();
     app.edit('before cutoff');
     app.setDay('2026-11-10');
     app.edit(' after');
     app.edit('', 'delete.backward', 0, 14);
-    expect(app.counts()).toEqual({ added: 1, net: 1 });
-    expect(dailyCounts(app.data, '2026-11-09')).toEqual({ added: 0, net: 2 });
-    expect(dailyCounts(app.data, '2026-11-10')).toEqual({ added: 1, net: -1 });
+    expect(activeSession(app.data)).toBeUndefined();
+    expect(app.counts()).toEqual({ added: 2, net: 2 });
+    expect(dailyCounts(app.data, '2026-11-09')).toEqual({ added: 2, net: 2 });
+    expect(dailyCounts(app.data, '2026-11-10')).toEqual({ added: 0, net: 0 });
     undo(app.view);
     expect(dailyCounts(app.data, '2026-11-09').added).toBe(2);
   });
@@ -677,7 +678,6 @@ describe('writing credit through editor transactions and real undo history', () 
     const app = setup();
     app.edit('one two');
     app.setDay('2026-11-10');
-    app.data.sessions[0].endedAt = '2026-11-10T13:00:00Z';
     app.data.sessions.push({ id: 'second', startedAt: '2026-11-10T14:00:00Z', endedAt: null, days: {} });
     undo(app.view);
     expect(dailyCounts(app.data, '2026-11-09')).toEqual({ added: 0, net: 0 });

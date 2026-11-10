@@ -1,5 +1,5 @@
 import { editorInfoField, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, type App } from 'obsidian';
-import { activeSession, applyCredit, claimGoalCelebration, dailyCounts, initialData, parseData, sessionCounts, writingDay, type Data, type Mode } from './model';
+import { activeSession, applyCredit, claimGoalCelebration, dailyCounts, endExpiredSession, initialData, nextWritingCutoff, parseData, sessionCounts, writingDay, type Data, type Mode } from './model';
 import { trackingExtension } from './tracking';
 import { writeQueue } from './storage';
 import { restoreOwnership, saveDocument } from './ownership';
@@ -12,6 +12,7 @@ export default class WritingSessions extends Plugin {
   private saveFailed = false;
   private celebrating = false;
   private announcement!: HTMLDivElement;
+  private cutoffTimer?: number;
 
   async onload(): Promise<void> {
     await writeQueue(this.app).pending;
@@ -19,13 +20,16 @@ export default class WritingSessions extends Plugin {
     catch (error) { new Notice(String(error), 0); throw error; }
     this.status = this.addStatusBarItem().createEl('button', { cls: 'writing-sessions-status' });
     this.announcement = this.status.parentElement!.createDiv({ cls: 'writing-sessions-announcement', attr: { role: 'status', 'aria-atomic': 'true' } });
+    this.expireSession();
     this.registerDomEvent(this.status, 'click', () => this.openControls());
     this.addCommand({ id: 'start-session', name: 'Start writing session', checkCallback: checking => {
+      this.expireSession();
       if (activeSession(this.data)) return false;
       if (!checking) this.startSession();
       return true;
     } });
     this.addCommand({ id: 'end-session', name: 'End writing session', checkCallback: checking => {
+      this.expireSession();
       if (!activeSession(this.data)) return false;
       if (!checking) this.endSession();
       return true;
@@ -52,6 +56,9 @@ export default class WritingSessions extends Plugin {
       if (renamed) this.changed();
     }));
     this.registerEditorExtension(trackingExtension(() => {
+      // Timers may be delayed while the computer sleeps. Expire before deciding
+      // whether this editor transaction belongs to an active session.
+      this.expireSession();
       const session = activeSession(this.data);
       return session ? { sessionId: session.id, day: writingDay(new Date()) } : undefined;
     }, credit => {
@@ -70,19 +77,24 @@ export default class WritingSessions extends Plugin {
         this.changed();
       },
     }));
-    this.registerInterval(window.setInterval(() => this.refresh(), 30_000));
+    this.registerInterval(window.setInterval(() => this.checkClock(), 30_000));
+    this.registerDomEvent(window, 'focus', () => this.checkClock());
+    this.registerDomEvent(document, 'visibilitychange', () => this.checkClock());
+    this.register(() => window.clearTimeout(this.cutoffTimer));
     this.addSettingTab(new WritingSettings(this.app, this));
-    this.refresh();
+    this.checkClock();
   }
 
   onunload(): void { this.controls?.close(); }
 
   startSession(): void {
+    this.expireSession();
     if (activeSession(this.data)) return;
     this.data.sessions.push({ id: crypto.randomUUID(), startedAt: new Date().toISOString(), endedAt: null, days: {} });
     this.changed();
   }
   endSession(): void {
+    this.expireSession();
     const session = activeSession(this.data);
     if (!session) return;
     session.endedAt = new Date().toISOString();
@@ -92,6 +104,7 @@ export default class WritingSessions extends Plugin {
   setTarget(target: number): void { this.data.target = target; this.changed(); }
   setCelebrateGoal(enabled: boolean): void { this.data.celebrateGoal = enabled; this.changed(); }
   openControls(): void {
+    this.expireSession();
     this.controls?.close();
     this.controls = new SessionModal(this.app, this);
     this.controls.open();
@@ -99,6 +112,17 @@ export default class WritingSessions extends Plugin {
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+  private expireSession(): boolean {
+    if (!endExpiredSession(this.data, new Date())) return false;
+    this.changed();
+    return true;
+  }
+  private checkClock(): void {
+    if (!this.expireSession()) this.refresh();
+    window.clearTimeout(this.cutoffTimer);
+    const now = new Date();
+    this.cutoffTimer = window.setTimeout(() => this.checkClock(), nextWritingCutoff(now).getTime() - now.getTime());
   }
   private changed(): void {
     this.refresh();

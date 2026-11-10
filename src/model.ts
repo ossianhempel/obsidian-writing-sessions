@@ -30,6 +30,20 @@ export function writingDay(now: Date): string {
 export function activeSession(data: Data): Session | undefined {
   return data.sessions.find(session => session.endedAt === null);
 }
+export function nextWritingCutoff(now: Date): Date {
+  const cutoff = new Date(now);
+  if (cutoff.getHours() >= 4) cutoff.setDate(cutoff.getDate() + 1);
+  cutoff.setHours(4, 0, 0, 0);
+  return cutoff;
+}
+export function endExpiredSession(data: Data, now: Date): boolean {
+  const session = activeSession(data);
+  if (!session) return false;
+  const cutoff = nextWritingCutoff(new Date(session.startedAt));
+  if (now.getTime() < cutoff.getTime()) return false;
+  session.endedAt = cutoff.toISOString();
+  return true;
+}
 export function total(counts: Counts[]): Counts {
   return counts.reduce((sum, value) => ({ added: sum.added + value.added, net: sum.net + value.net }), emptyCounts());
 }

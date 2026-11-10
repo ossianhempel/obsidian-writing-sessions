@@ -268,6 +268,64 @@ try {
   assert.equal(await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.celebratedDays.length), 1);
   assert.equal(await status.evaluate(el => el.classList.contains('writing-sessions-celebrate')), false);
   check('Goal celebration does not repeat after undo, rewriting, sessions, and reloads');
+  // Move only Date in this disposable renderer; timers keep running normally.
+  const cutoff = await page.evaluate(() => {
+    const date = new Date();
+    if (date.getHours() >= 4) date.setDate(date.getDate() + 1);
+    date.setHours(4, 0, 0, 0);
+    return date.getTime();
+  });
+  await page.clock.setFixedTime(cutoff - 250);
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await status.click();
+  await page.getByRole('button', { name: 'End session', exact: true }).click();
+  await page.getByRole('button', { name: 'Start session', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await editor();
+  await page.keyboard.press(`${mod}+End`);
+  await page.keyboard.type(' Before cutoff.');
+  await counts(19, 25);
+  await page.clock.setFixedTime(cutoff);
+  await page.waitForFunction(() => {
+    const plugin = app.plugins.plugins['writing-sessions'];
+    return plugin.data.sessions.every(session => session.endedAt !== null) &&
+      document.querySelector('.writing-sessions-status')?.textContent.includes('Start writing · Today: 0 / 10');
+  });
+  assert.equal(await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.sessions.at(-1).endedAt), new Date(cutoff).toISOString());
+  await page.keyboard.type(' After cutoff.');
+  await counts(19, 25);
+  check('04:00 timer ends the session, resets today, and stops counting until manual start');
+  await status.click();
+  await page.getByRole('button', { name: 'Start session', exact: true }).click();
+  await page.keyboard.press('Escape');
+  await editor();
+  await page.keyboard.press(`${mod}+End`);
+  await page.keyboard.type(' Fresh session.');
+  await counts(21, 27);
+  await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('Session: 2 · Today: 2 / 10'));
+  const nextCutoff = await page.evaluate(() => {
+    const date = new Date(); date.setDate(date.getDate() + 1); date.setHours(4, 0, 0, 0); return date.getTime();
+  });
+  await page.clock.setFixedTime(nextCutoff + 3_600_000);
+  await page.keyboard.type(' Wake edit.');
+  await counts(21, 27);
+  assert.equal(await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.sessions.at(-1).endedAt), new Date(nextCutoff).toISOString());
+  check('First edit after a missed cutoff expires the session before granting credit');
+  await status.click();
+  await page.getByRole('button', { name: 'Start session', exact: true }).click();
+  await page.keyboard.press('Escape');
+  const followingCutoff = await page.evaluate(() => {
+    const date = new Date(); date.setDate(date.getDate() + 1); date.setHours(4, 0, 0, 0); return date.getTime();
+  });
+  await page.clock.setFixedTime(followingCutoff + 3_600_000);
+  await page.evaluate(async () => {
+    await app.plugins.disablePlugin('writing-sessions');
+    await app.plugins.enablePlugin('writing-sessions');
+  });
+  await counts(21, 27);
+  assert.equal(await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.sessions.at(-1).endedAt), new Date(followingCutoff).toISOString());
+  await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('Start writing · Today: 0 / 10'));
+  check('Reload after a missed cutoff closes the saved session at 04:00 and keeps history');
   assert.deepEqual(result.errors, []);
   check('No uncaught renderer errors');
 } catch (error) {

@@ -9,8 +9,8 @@ The default daily cue is **100 words**. Keep going when you reach it. There are 
 - Start and end sessions from the status bar or command palette. Assign your own shortcuts in Obsidian's Hotkeys settings.
 - The status bar shows the current session and today's total across sessions.
 - Click it for session controls, a counting-mode switch, daily totals, and session history.
-- Sessions and progress survive a restart. An unfinished session stays active until you end it.
-- The writing day starts at **04:00 local time**. Writing at 01:00 belongs to the previous day. An active session can span several writing days.
+- Sessions and progress survive a restart within the same writing day. Every active session ends automatically at **04:00 local time**. If Obsidian was closed or asleep, it closes the expired session on return, recording the cutoff as its end time.
+- Writing at 01:00 belongs to the previous day. At 04:00 the daily counter resets; start a new session manually to count more writing. Previous days and sessions stay in history.
 - Change the goal in **Settings → Writing Sessions → Daily word cue**.
 - Reaching the goal briefly pulses the status bar and shows “Daily goal reached!”. It celebrates once per writing day, across sessions and restarts. Reduce Motion keeps the message without movement. Turn it off with **Celebrate daily goal** in the same settings.
 
