@@ -1,7 +1,8 @@
-import { Modal, Notice, Plugin, PluginSettingTab, Setting, type App } from 'obsidian';
+import { editorInfoField, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, type App } from 'obsidian';
 import { activeSession, applyCredit, dailyCounts, initialData, parseData, sessionCounts, writingDay, type Data, type Mode } from './model';
 import { trackingExtension } from './tracking';
 import { writeQueue } from './storage';
+import { restoreOwnership, saveDocument } from './ownership';
 
 export default class WritingSessions extends Plugin {
   data: Data = initialData();
@@ -30,13 +31,35 @@ export default class WritingSessions extends Plugin {
     this.addCommand({ id: 'toggle-counting-mode', name: 'Toggle words added / net change', callback: () => {
       this.setMode(this.data.mode === 'added' ? 'net' : 'added');
     } });
+    const restored = await restoreOwnership(this.data.ownership, async path => {
+      const file = this.app.vault.getAbstractFileByPath(path);
+      return file instanceof TFile ? { key: file, text: await this.app.vault.read(file) } : undefined;
+    });
+    this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
+      let renamed = false;
+      for (const path of Object.keys(this.data.ownership)) {
+        if (path !== oldPath && !path.startsWith(`${oldPath}/`)) continue;
+        this.data.ownership[file.path + path.slice(oldPath.length)] = this.data.ownership[path];
+        delete this.data.ownership[path];
+        renamed = true;
+      }
+      if (renamed) this.changed();
+    }));
     this.registerEditorExtension(trackingExtension(() => {
       const session = activeSession(this.data);
       return session ? { sessionId: session.id, day: writingDay(new Date()) } : undefined;
     }, credit => {
       if (!credit.added && !credit.net) return;
       applyCredit(this.data, credit);
-      this.changed();
+    }, state => state.field(editorInfoField, false)?.file ?? undefined, {
+      initial: restored,
+      commit: (key, snapshot) => {
+        if (key instanceof TFile) {
+          if (snapshot.marks.length) this.data.ownership[key.path] = saveDocument(snapshot);
+          else delete this.data.ownership[key.path];
+        }
+        this.changed();
+      },
     }));
     this.registerInterval(window.setInterval(() => this.refresh(), 30_000));
     this.addSettingTab(new WritingSettings(this.app, this));
@@ -113,7 +136,8 @@ class WritingSettings extends PluginSettingTab {
         input.addOption('added', 'Words added').addOption('net', 'Net change').setValue(this.tracker.data.mode)
           .onChange(value => this.tracker.setMode(value as Mode));
       });
-    this.containerEl.createEl('p', { text: 'Words added excludes paste, drag and drop, and background changes. Net change includes manual pastes and deletions. The writing day starts at 04:00 local time.' });
+    this.containerEl.createEl('p', { text: 'Words added subtracts words you delete from the current session, while deleting older text leaves it unchanged. Paste, drag and drop, and background changes earn no credit. The writing day starts at 04:00 local time.' });
+    this.containerEl.createEl('p', { text: 'Word ownership survives restarts for unchanged notes. Notes changed outside Obsidian become baseline; saved totals are kept.' });
   }
 }
 
@@ -135,7 +159,7 @@ class SessionModal extends Modal {
         .onChange(value => this.tracker.setMode(value as Mode));
       this.subscribe(() => input.setValue(this.tracker.data.mode));
     });
-    this.contentEl.createEl('p', { cls: 'writing-sessions-hint', text: 'Words added counts typing, including words later deleted. Paste and moving text earn no extra credit. Net change shows manual document growth, including pastes. Undo reverses credit; redo restores it.' });
+    this.contentEl.createEl('p', { cls: 'writing-sessions-hint', text: 'Words added counts new words that remain from this session. Deleting older text leaves it unchanged. Paste earns no new credit; cut and paste transfers existing credit. Net change includes all manual pastes and deletions. Undo reverses changes; redo restores them.' });
     const history = this.contentEl.createDiv({ cls: 'writing-sessions-history' });
     this.subscribe(() => {
       const { data } = this.tracker;

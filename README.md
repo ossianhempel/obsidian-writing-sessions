@@ -15,17 +15,21 @@ The default daily cue is **100 words**. Keep going when you reach it. There are 
 
 ### Counting rules
 
-**Words added** is the default. It credits words typed during an active session, including words you later delete. Pasted text and drag-and-drop earn no credit. Cut and paste won't count the same words twice. Undo removes the credit for the original insertion; redo restores it.
+**Words added** is the default. It counts new words that remain from the current session. Deleting those words subtracts their credit. Deleting older words, words from a previous session, or pasted text does not reduce this count. Editing a word's spelling keeps one word credited; replacing two session words with one leaves one credited. Pasted text and drag-and-drop earn no new credit.
+
+Cutting session words temporarily removes their credit. A matching single-selection paste in the same session transfers that credit, including across notes. Repeated pastes earn no additional credit. Moving lines with the editor commands also preserves credit. Undo and redo restore both the text and its word credit, without counting a moved word twice.
 
 **Net change** measures the change in word count from manual editor actions during sessions. It includes pasted text and subtracts deleted words, even if those words were written earlier. Cutting and pasting between tracked notes cancels out. Net change can be negative. Switching modes changes the displayed metric, not the stored history.
 
-Continuing an existing word does not count another word. Replacing whole words with newly typed words counts as new writing. Words are groups of letters or numbers, with internal apostrophes and hyphens allowed. Markdown punctuation alone does not count. Text in headings, links, code, and frontmatter follows the same rule. This is a writing-activity counter, not a rendered-prose parser.
+Continuing an existing word does not count another word. Replacing older words with newly typed words counts as new writing. Words are groups of letters or numbers, with internal apostrophes and hyphens allowed. Markdown punctuation alone does not count. Text in headings, links, code, and frontmatter follows the same rule. This is a writing-activity counter, not a rendered-prose parser.
 
 Background imports, sync changes, and unannotated programmatic edits are ignored. Other plugins that imitate typing events may count as typing. Clipboard-based dictation is treated as paste and earns no added-word credit. Undo credit follows the original session and day, even if that session has ended. Obsidian does not retain this plugin's undo effects after an app restart or plugin reload.
 
+Word ownership survives app restarts and plugin reloads when the note's contents still match the saved fingerprint. Changed or missing notes lose their old ownership metadata while saved totals stay unchanged. The plugin never guesses which externally edited words belong to you. Upgrading from the original release keeps totals and treats existing text as baseline, since that release did not save word ownership. Clipboard cut transfers and Obsidian's undo history do not survive a restart.
+
 ## Install
 
-Desktop Obsidian 1.8 or newer is required. The plugin is not yet in the community directory.
+Desktop Obsidian 1.15 or newer is required. The plugin is not yet in the community directory.
 
 1. Build from source below, or use a provided plugin ZIP.
 2. Create `<your-vault>/.obsidian/plugins/writing-sessions/`.
@@ -53,11 +57,13 @@ To smoke-test in a separate Obsidian desktop instance:
 npm run smoke
 ```
 
-See [verification](docs/verification.md) for prerequisites and the evidence covered. No hosted CI jobs are configured.
+See [verification](docs/verification.md) for prerequisites and the evidence covered. Pushes and pull requests run the checks and an isolated Obsidian test on GitHub Actions. See [releases](docs/releases.md) for automatic publishing and Community-directory submission.
 
 ## Privacy and storage
 
-No network requests, analytics, account, or cloud service. Only session timestamps, aggregate word counts per writing day, your target, and counting mode are saved in the plugin's `data.json`. Note contents, note names, and edit text are not saved by this plugin.
+No network requests, analytics, account, or cloud service. The plugin's `data.json` saves session timestamps, aggregate word counts per writing day, your target, counting mode, and word ownership metadata: note paths, SHA-256 fingerprints, word positions, and session/day identifiers. Note contents and clipboard text are not saved. Totals and ownership are written together so a completed save describes the same edit.
+
+To follow words through edits and moves, the plugin holds document snapshots and the most recent cut text in memory. Ownership fingerprints use the desktop Node crypto API; this release is desktop-only. Renames performed while the plugin is active update stored paths, including folder renames. Notes renamed while the plugin is closed become baseline on the next start.
 
 History is per vault and currently intended for one desktop writer. Syncing the same plugin data between concurrently active computers is not supported; the most recently synced data file can replace another computer's counts. Back up your vault as usual.
 

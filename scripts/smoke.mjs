@@ -6,6 +6,7 @@ import path from 'node:path';
 import { chromium } from 'playwright-core';
 
 const root = process.cwd();
+const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
 await mkdir('.verification', { recursive: true });
 const scratch = await mkdtemp(path.join(root, '.verification/run-'));
 const profile = path.join(scratch, 'profile');
@@ -43,7 +44,7 @@ try {
     await copyFile(archive, path.join(profile, path.basename(archive)));
   }
   const binary = process.env.OBSIDIAN_BINARY ?? '/Applications/Obsidian.app/Contents/MacOS/Obsidian';
-  child = spawn(binary, [`--user-data-dir=${profile}`, '--remote-debugging-port=0', '--no-first-run'], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(binary, [`--user-data-dir=${profile}`, '--remote-debugging-port=0', '--no-first-run', ...(process.env.CI ? ['--no-sandbox'] : [])], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   let logs = '';
   child.stdout.on('data', chunk => { logs += chunk; });
   child.stderr.on('data', chunk => { logs += chunk; });
@@ -116,25 +117,25 @@ try {
   await page.keyboard.press('Escape');
   check('Start via UI and type nine words');
   await editor();
-  await page.keyboard.press('Meta+a');
+  await page.keyboard.press(`${mod}+a`);
   await page.keyboard.press('Backspace');
-  await counts(9, 0);
-  check('Ordinary deletion preserves words added');
-  await page.keyboard.press('Meta+z');
+  await counts(0, 0);
+  check('Ordinary deletion removes session-word credit');
+  await page.keyboard.press(`${mod}+z`);
   await counts(9, 9);
-  check('Undo deletion restores net without adding credit');
+  check('Undo deletion restores both retained words and net');
   const draft = () => page.evaluate(() => app.workspace.activeEditor.editor.getValue());
   // Real history grouping depends on elapsed time. A busy desktop can split
   // typing into several groups, so undo/redo all groups rather than assuming one.
   for (let step = 0; step < 50 && (await draft()).trim(); step++) {
     const previous = await draft();
-    await page.keyboard.press('Meta+z');
+    await page.keyboard.press(`${mod}+z`);
     await page.waitForFunction(previous => app.workspace.activeEditor.editor.getValue() !== previous, previous);
   }
   await counts(0, 0);
   for (let step = 0; step < 50 && (await draft()) !== 'One small habit starts with sitting down to write.'; step++) {
     const previous = await draft();
-    await page.keyboard.press('Meta+Shift+z');
+    await page.keyboard.press(`${mod}+Shift+z`);
     await page.waitForFunction(previous => app.workspace.activeEditor.editor.getValue() !== previous, previous);
   }
   await counts(9, 9);
@@ -144,6 +145,16 @@ try {
   await page.keyboard.type('Another page counts too.');
   await counts(13, 13);
   check('Typing across notes contributes to the same session');
+  await openNote('Draft.md');
+  await editor();
+  await page.keyboard.press(`${mod}+a`);
+  await page.keyboard.press('Backspace');
+  await counts(4, 4);
+  await page.keyboard.press(`${mod}+z`);
+  await counts(13, 13);
+  check('Returning to a note retains session-word origins for deletion and undo');
+  await openNote('Second note.md');
+  await editor();
   await page.keyboard.press('End');
   // Dispatch a real clipboard event to CodeMirror. No machine clipboard access
   // or user clipboard mutation is necessary.
@@ -163,7 +174,7 @@ try {
   await page.getByRole('button', { name: 'Start session', exact: true }).click();
   await page.keyboard.press('Escape');
   await editor();
-  await page.keyboard.press('Meta+End');
+  await page.keyboard.press(`${mod}+End`);
   await page.keyboard.type(' More words.');
   await counts(15, 21);
   await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('Session: 2'));
@@ -184,6 +195,14 @@ try {
     await app.plugins.enablePlugin('writing-sessions');
   });
   await counts(15, 21);
+  await openNote('Second note.md');
+  await editor();
+  await page.keyboard.press(`${mod}+a`);
+  await page.keyboard.press('Backspace');
+  await counts(13, 9);
+  await page.keyboard.press(`${mod}+z`);
+  await counts(15, 21);
+  check('Ownership survives reload and subtracts only active-session words');
   await status.click();
   await page.getByRole('button', { name: 'End session', exact: true }).waitFor();
   check('Saved counts, history, and unfinished session survive plugin reload');
@@ -206,7 +225,7 @@ try {
     };
   });
   await editor();
-  await page.keyboard.press('Meta+End');
+  await page.keyboard.press(`${mod}+End`);
   await page.keyboard.type(' Save safely.');
   await page.evaluate(async () => {
     await app.plugins.disablePlugin('writing-sessions');

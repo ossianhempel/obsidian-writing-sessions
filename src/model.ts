@@ -1,3 +1,4 @@
+import { validOwnership, type SavedOwnership } from './ownership';
 export type Mode = 'added' | 'net';
 export interface Counts { added: number; net: number }
 export interface Session {
@@ -7,14 +8,15 @@ export interface Session {
   days: Record<string, Counts>;
 }
 export interface Data {
-  version: 1;
+  version: 2;
+  ownership: SavedOwnership;
   target: number;
   mode: Mode;
   sessions: Session[];
 }
 export interface Credit extends Counts { sessionId: string; day: string }
 export const emptyCounts = (): Counts => ({ added: 0, net: 0 });
-export const initialData = (): Data => ({ version: 1, target: 100, mode: 'added', sessions: [] });
+export const initialData = (): Data => ({ version: 2, target: 100, mode: 'added', sessions: [], ownership: {} });
 
 // Calendar arithmetic, not subtracting four elapsed hours, keeps the cutoff at
 // local 04:00 even on daylight-saving transitions.
@@ -42,9 +44,10 @@ export function applyCredit(data: Data, credit: Credit): void {
 }
 export function parseData(value: unknown): Data {
   if (value === null || value === undefined) return initialData();
-  const data = value as Data;
+  const raw = value as Omit<Data, 'version'> & { version: number };
+  const data = { ...raw, version: 2, ownership: raw.version === 1 ? {} : raw.ownership } as Data;
   const validCounts = (counts: Counts) => counts && Number.isSafeInteger(counts.added) && Number.isSafeInteger(counts.net);
-  if (data.version !== 1 || !Number.isSafeInteger(data.target) || data.target < 1 ||
+  if (![1, 2].includes(raw.version) || !Number.isSafeInteger(data.target) || data.target < 1 ||
       !['added', 'net'].includes(data.mode) || !Array.isArray(data.sessions) ||
       !data.sessions.every(session => session && typeof session.id === 'string' &&
         typeof session.startedAt === 'string' && Number.isFinite(Date.parse(session.startedAt)) &&
@@ -52,7 +55,8 @@ export function parseData(value: unknown): Data {
         session.days && typeof session.days === 'object' && !Array.isArray(session.days) &&
         Object.entries(session.days).every(([day, counts]) => /^\d{4}-\d{2}-\d{2}$/.test(day) && validCounts(counts))) ||
       new Set(data.sessions.map(session => session.id)).size !== data.sessions.length ||
-      data.sessions.filter(session => session.endedAt === null).length > 1) {
+      data.sessions.filter(session => session.endedAt === null).length > 1 ||
+      !validOwnership(data.ownership, new Set(data.sessions.map(session => session.id)))) {
     throw new Error('Writing Sessions data is invalid. Your saved data has not been overwritten.');
   }
   return data;
