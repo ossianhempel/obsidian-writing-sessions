@@ -99,7 +99,6 @@ export function trackingExtension(
     create: initial,
     update: (_value, transaction) => {
       const switched = transaction.effects.find(effect => effect.is(documentEffect));
-      if (switched) return switched.value;
       const value = before(transaction.startState);
       const receipts = transaction.effects.flatMap(effect => effect.is(historyReceipt) ? effect.value : []);
       if ((transaction.isUserEvent('undo') || transaction.isUserEvent('redo')) && receipts.length) {
@@ -115,7 +114,7 @@ export function trackingExtension(
         if (!replayed.doc.eq(transaction.newDoc)) throw new Error('Writing-session history does not match editor changes');
         return { ...value, marks: replayed.marks, history: replayed.history, sessionId: current()?.sessionId };
       }
-      let marks = mapMarks(value.marks, transaction.changes);
+      let marks = switched ? switched.value.marks : mapMarks(value.marks, transaction.changes);
       for (const effect of transaction.effects) if (effect.is(ownershipEffect)) {
         marks = marks.filter(mark => !overlaps(mark, effect.value)).concat(effect.value.marks);
       }
@@ -123,9 +122,9 @@ export function trackingExtension(
       if (transaction.docChanged) {
         if (transaction.isUserEvent('undo') || transaction.isUserEvent('redo')) history = untrackedHistory(history, transaction.changes, transaction.startState.doc, transaction.isUserEvent('redo'));
         else if (transaction.annotation(Transaction.addToHistory) === false) history = mapHistory(history, transaction.changes.desc);
-        else if (receipts.length) history = recordHistory(history, receipts[0], transaction.changes, transaction.startState.doc, value.marks, marks);
+        else if (receipts.length) history = recordHistory(history, receipts[0], transaction.changes, transaction.startState.doc, switched ? [] : value.marks, marks);
       }
-      return { key: value.key, marks, history, pending: transaction.docChanged ? undefined : value.pending, sessionId: current()?.sessionId };
+      return { key: switched?.value.key ?? value.key, marks, history, pending: switched ? switched.value.pending : transaction.docChanged ? undefined : value.pending, sessionId: current()?.sessionId };
     },
   });
   return [
@@ -133,7 +132,9 @@ export function trackingExtension(
     EditorView.domEventHandlers({ copy: () => { cut = undefined; } }),
     EditorState.transactionExtender.of(transaction => {
       const extension = extend(transaction);
-      if (!transaction.docChanged || transaction.isUserEvent('undo') || transaction.isUserEvent('redo') || transaction.annotation(Transaction.addToHistory) === false) return extension;
+      // Filters may rebuild a transaction and run extenders again. Retain the
+      // existing receipt so host history and our ledger record the same step.
+      if (!transaction.docChanged || transaction.isUserEvent('undo') || transaction.isUserEvent('redo') || transaction.annotation(Transaction.addToHistory) === false || transaction.effects.some(effect => effect.is(historyReceipt))) return extension;
       const effects = extension?.effects;
       return { ...extension, effects: [...(Array.isArray(effects) ? effects : effects ? [effects] : []), historyReceipt.of([{}])] };
     }),

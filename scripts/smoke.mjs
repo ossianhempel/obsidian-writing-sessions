@@ -248,9 +248,12 @@ try {
 } finally {
   await browser?.close().catch(() => {});
   if (child?.pid && child.exitCode === null) {
-    process.kill(-child.pid, 'SIGTERM');
+    const signal = value => {
+      try { process.kill(-child.pid, value); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    };
+    signal('SIGTERM');
     await Promise.race([new Promise(resolve => child.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 5000))]);
-    if (child.exitCode === null) process.kill(-child.pid, 'SIGKILL');
+    if (child.exitCode === null) signal('SIGKILL');
   }
   if (process.platform === 'darwin') execFileSync('/usr/bin/trash', [scratch]);
   else { const { rm } = await import('node:fs/promises'); await rm(scratch, { recursive: true, force: true }); }

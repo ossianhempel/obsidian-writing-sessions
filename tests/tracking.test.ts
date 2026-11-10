@@ -502,6 +502,27 @@ describe('writing credit through editor transactions and real undo history', () 
     app.edit('', 'delete.backward', 0, 3);
     expect(app.counts()).toEqual({ added: 0, net: -1 });
   });
+  it('keeps one receipt when a host filter rebuilds an already extended transaction', () => {
+    const app = setup();
+    app.view.dispatch({ effects: StateEffect.appendConfig.of(EditorState.transactionFilter.of(transaction => ({
+      changes: transaction.changes, selection: transaction.selection, effects: transaction.effects,
+      annotations: [Transaction.userEvent.of(transaction.annotation(Transaction.userEvent) ?? ''),
+        Transaction.addToHistory.of(transaction.annotation(Transaction.addToHistory) ?? true),
+        ...(transaction.annotation(isolateHistory) ? [isolateHistory.of(transaction.annotation(isolateHistory)!)] : [])],
+    }))) });
+    app.edit('one two');
+    app.edit('', 'delete.backward', 0, 7);
+    expect(app.counts().added).toBe(0);
+    expect(() => undo(app.view)).not.toThrow();
+    expect(app.view.state.doc.toString()).toBe('one two'); expect(app.counts().added).toBe(2);
+    redo(app.view); expect(app.view.state.doc.toString()).toBe(''); expect(app.counts().added).toBe(0);
+  });
+  it('records a history-eligible document load that also switches file metadata', () => {
+    const app = setup(); app.edit('one two');
+    app.view.dispatch({ changes: { from: 0, to: 7, insert: 'older' }, effects: app.fileChanged.of({}), annotations: isolateHistory.of('full') });
+    expect(() => undo(app.view)).not.toThrow();
+    expect(app.view.state.doc.toString()).toBe('one two');
+  });
   it('rebases deletion receipts through background changes without invalid positions', () => {
     const app = setup();
     app.edit('one two'); app.edit('', 'delete.backward', 0, 7);
