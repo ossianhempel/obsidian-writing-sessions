@@ -1,4 +1,4 @@
-import { editorInfoField, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, type App } from 'obsidian';
+import { editorInfoField, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, type App } from 'obsidian';
 import { activeSession, applyCredit, dailyCounts, initialData, parseData, sessionCounts, writingDay, type Data, type Mode } from './model';
 import { trackingExtension } from './tracking';
 import { writeQueue } from './storage';
@@ -33,7 +33,10 @@ export default class WritingSessions extends Plugin {
     } });
     const restored = await restoreOwnership(this.data.ownership, async path => {
       const file = this.app.vault.getAbstractFileByPath(path);
-      return file instanceof TFile ? { key: file, text: await this.app.vault.read(file) } : undefined;
+      if (!(file instanceof TFile)) return undefined;
+      const view = this.app.workspace.getLeavesOfType('markdown').find(leaf => leaf.view instanceof MarkdownView && leaf.view.file === file)?.view;
+      // Open editors can be newer than disk during Obsidian's save debounce.
+      return { key: file, text: view instanceof MarkdownView ? view.editor.getValue() : await this.app.vault.read(file) };
     });
     this.registerEvent(this.app.vault.on('rename', (file, oldPath) => {
       let renamed = false;
