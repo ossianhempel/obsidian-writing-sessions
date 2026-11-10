@@ -88,9 +88,12 @@ try {
   await page.evaluate(() => window.focus());
   check('Plugin loads in isolated Obsidian');
   async function openNote(file) {
-    const row = page.locator(`.nav-file-title[data-path="${file}"]`);
-    await row.click();
-    await page.locator('.markdown-source-view.mod-cm6 .cm-content').last().waitFor();
+    // A nav click can leave the previous editor visible during async loading.
+    // Await the public file-open operation before sending real keystrokes.
+    await page.evaluate(async path => {
+      await app.workspace.getLeaf(false).openFile(app.vault.getAbstractFileByPath(path));
+    }, file);
+    await page.locator('.markdown-source-view.mod-cm6 .cm-content:visible').last().waitFor();
   }
   async function editor() {
     // Reloading editor extensions can clear the active-pane class until the
