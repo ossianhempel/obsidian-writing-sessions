@@ -92,7 +92,9 @@ try {
     await page.locator('.markdown-source-view.mod-cm6 .cm-content').last().waitFor();
   }
   async function editor() {
-    const content = page.locator('.workspace-leaf.mod-active .cm-content');
+    // Reloading editor extensions can clear the active-pane class until the
+    // editor receives focus. This disposable workspace has one visible editor.
+    const content = page.locator('.markdown-source-view.mod-cm6 .cm-content:visible').last();
     await content.click();
     await content.focus();
     return content;
