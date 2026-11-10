@@ -1,5 +1,5 @@
 import { editorInfoField, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, type App } from 'obsidian';
-import { activeSession, applyCredit, dailyCounts, initialData, parseData, sessionCounts, writingDay, type Data, type Mode } from './model';
+import { activeSession, applyCredit, claimGoalCelebration, dailyCounts, initialData, parseData, sessionCounts, writingDay, type Data, type Mode } from './model';
 import { trackingExtension } from './tracking';
 import { writeQueue } from './storage';
 import { restoreOwnership, saveDocument } from './ownership';
@@ -10,12 +10,15 @@ export default class WritingSessions extends Plugin {
   private listeners = new Set<() => void>();
   private controls?: SessionModal;
   private saveFailed = false;
+  private celebrating = false;
+  private announcement!: HTMLDivElement;
 
   async onload(): Promise<void> {
     await writeQueue(this.app).pending;
     try { this.data = parseData(await this.loadData()); }
     catch (error) { new Notice(String(error), 0); throw error; }
     this.status = this.addStatusBarItem().createEl('button', { cls: 'writing-sessions-status' });
+    this.announcement = this.status.parentElement!.createDiv({ cls: 'writing-sessions-announcement', attr: { role: 'status', 'aria-atomic': 'true' } });
     this.registerDomEvent(this.status, 'click', () => this.openControls());
     this.addCommand({ id: 'start-session', name: 'Start writing session', checkCallback: checking => {
       if (activeSession(this.data)) return false;
@@ -53,7 +56,10 @@ export default class WritingSessions extends Plugin {
       return session ? { sessionId: session.id, day: writingDay(new Date()) } : undefined;
     }, credit => {
       if (!credit.added && !credit.net) return;
+      const day = writingDay(new Date());
+      const previousCount = dailyCounts(this.data, day)[this.data.mode];
       applyCredit(this.data, credit);
+      if (credit.day === day && claimGoalCelebration(this.data, day, previousCount)) this.celebrate();
     }, state => state.field(editorInfoField, false)?.file ?? undefined, {
       initial: restored,
       commit: (key, snapshot) => {
@@ -84,6 +90,7 @@ export default class WritingSessions extends Plugin {
   }
   setMode(mode: Mode): void { this.data.mode = mode; this.changed(); }
   setTarget(target: number): void { this.data.target = target; this.changed(); }
+  setCelebrateGoal(enabled: boolean): void { this.data.celebrateGoal = enabled; this.changed(); }
   openControls(): void {
     this.controls?.close();
     this.controls = new SessionModal(this.app, this);
@@ -114,10 +121,25 @@ export default class WritingSessions extends Plugin {
     const session = activeSession(this.data);
     const today = dailyCounts(this.data, writingDay(new Date()))[mode];
     const label = mode === 'added' ? 'words added' : 'net words';
-    this.status.setText(`${session ? `Session: ${sessionCounts(session)[mode]}` : 'Start writing'} · Today: ${today} / ${this.data.target}${mode === 'net' ? ' net' : ''}${this.saveFailed ? ' · Not saved' : ''}`);
-    this.status.setAttribute('aria-label', `Writing Sessions. ${label}. ${this.status.textContent}. Open controls and history.`);
+    const reached = today >= this.data.target;
+    this.status.toggleClass('is-goal-reached', reached);
+    this.status.setText(`${this.celebrating ? 'Daily goal reached! · ' : ''}${session ? `Session: ${sessionCounts(session)[mode]}` : 'Start writing'} · ${reached ? '✓ ' : ''}Today: ${today} / ${this.data.target}${mode === 'net' ? ' net' : ''}${this.saveFailed ? ' · Not saved' : ''}`);
+    this.status.setAttribute('aria-label', `Writing Sessions. ${reached ? 'Daily goal reached. ' : ''}${label}. ${this.status.textContent}. Open controls and history.`);
     this.status.title = `${label}. Writing day resets at 04:00. Click for controls and history.`;
     for (const listener of this.listeners) listener();
+  }
+  private celebrate(): void {
+    this.celebrating = true;
+    this.status.addClass('writing-sessions-celebrate');
+    this.announcement.setText(`Daily goal reached. ${this.data.target} ${this.data.mode === 'added' ? 'words added' : 'net words'} today.`);
+    const win = this.status.ownerDocument.defaultView!;
+    const timer = win.setTimeout(() => {
+      this.celebrating = false;
+      this.status.removeClass('writing-sessions-celebrate');
+      this.announcement.setText('');
+      this.refresh();
+    }, 2200);
+    this.register(() => win.clearTimeout(timer));
   }
 }
 
@@ -138,6 +160,11 @@ class WritingSettings extends PluginSettingTab {
         input.selectEl.setAttribute('aria-label', 'Counting mode');
         input.addOption('added', 'Words added').addOption('net', 'Net change').setValue(this.tracker.data.mode)
           .onChange(value => this.tracker.setMode(value as Mode));
+      });
+    new Setting(this.containerEl).setName('Celebrate daily goal').setDesc('Briefly celebrate in the status bar, once per writing day. Respects Reduce Motion.')
+      .addToggle(input => {
+        input.toggleEl.setAttribute('aria-label', 'Celebrate daily goal');
+        input.setValue(this.tracker.data.celebrateGoal).onChange(enabled => this.tracker.setCelebrateGoal(enabled));
       });
     this.containerEl.createEl('p', { text: 'Words added subtracts words you delete from the current session, while deleting older text leaves it unchanged. Paste, drag and drop, and background changes earn no credit. The writing day starts at 04:00 local time.' });
     this.containerEl.createEl('p', { text: 'Word ownership survives restarts for unchanged notes. Notes changed outside Obsidian become baseline; saved totals are kept.' });

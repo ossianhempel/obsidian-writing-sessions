@@ -791,7 +791,7 @@ describe('writing day, totals, and saved data', () => {
     expect(writingDay(new Date(2026, 9, 25, 4))).toBe('2026-10-25');
   });
   it('adds sessions together and preserves the unfinished session on reload', () => {
-    const data: Data = { version: 2, ownership: {}, target: 100, mode: 'added', sessions: [
+    const data: Data = { ...initialData(), sessions: [
       { id: 'one', startedAt: '2026-11-09T12:00:00Z', endedAt: '2026-11-09T13:00:00Z', days: { '2026-11-09': { added: 60, net: 40 } } },
       { id: 'two', startedAt: '2026-11-09T14:00:00Z', endedAt: null, days: { '2026-11-09': { added: 50, net: -3 } } },
     ] };

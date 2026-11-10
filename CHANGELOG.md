@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 — 2026-11-10
+
+- Celebrate reaching the daily goal with a brief status-bar pulse, a message, and a checkmark. Respect Reduce Motion and offer a setting to disable celebrations.
+- Celebrate once per writing day, including across sessions, deletion/undo, mode changes, and restarts. Changing the goal or loading existing progress does not trigger a celebration.
+
 ## 0.2.0 — 2026-11-10
 
 - Subtract deleted words only when they were credited to the active writing session. Older text and pasted words do not reduce the added-word counter.

@@ -24,6 +24,7 @@ try {
   await mkdir(screenshots, { recursive: true });
   await mkdir('release', { recursive: true });
   for (const file of ['main.js', 'manifest.json', 'styles.css']) await copyFile(file, path.join(pluginDir, file));
+  await writeFile(path.join(pluginDir, 'data.json'), JSON.stringify({ version: 2, target: 10, mode: 'added', sessions: [], ownership: {} }));
   await writeFile(path.join(vault, '.obsidian/community-plugins.json'), '["writing-sessions"]');
   await writeFile(path.join(vault, '.obsidian/core-plugins.json'), '["file-explorer","switcher","command-palette"]');
   await writeFile(path.join(vault, '.obsidian/app.json'), JSON.stringify({ livePreview: false, showInlineTitle: false, spellcheck: false }));
@@ -70,6 +71,7 @@ try {
   }
   assert.ok(page, 'No Obsidian vault window');
   page.setDefaultTimeout(10_000);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.bringToFront();
   page.on('pageerror', error => result.errors.push(String(error)));
   page.on('console', message => { if (message.type() === 'error') console.error('Renderer:', message.text()); });
@@ -150,6 +152,14 @@ try {
   await editor();
   await page.keyboard.type('Another page counts too.');
   await counts(13, 13);
+  await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('Daily goal reached!'));
+  assert.equal(await status.evaluate(el => getComputedStyle(el).animationName), 'writing-sessions-goal');
+  assert.match(await page.locator('.writing-sessions-announcement').innerText(), /Daily goal reached/);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert.equal(await status.evaluate(el => getComputedStyle(el).animationName), 'none');
+  await page.screenshot({ path: path.join(screenshots, 'daily-goal.png') });
+  await page.waitForFunction(() => !document.querySelector('.writing-sessions-status')?.textContent.includes('Daily goal reached!'));
+  check('Daily goal celebrates with motion, text, and a Reduce Motion alternative');
   check('Typing across notes contributes to the same session');
   await openNote('Draft.md');
   await editor();
@@ -173,7 +183,7 @@ try {
   check('Editor paste grows net but earns no writing credit');
   await status.click();
   await page.getByRole('combobox').selectOption('net');
-  await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('19 / 100 net'));
+  await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('19 / 10 net'));
   check('Mode toggle updates visible daily and session counters');
   await page.getByRole('combobox').selectOption('added');
   await page.getByRole('button', { name: 'End session', exact: true }).click();
@@ -255,6 +265,9 @@ try {
   const recoveredAdded = recovered.sessions.flatMap(session => Object.values(session.days)).reduce((sum, counts) => sum + counts.added, 0);
   assert.equal(recoveredAdded, 17);
   check('Immediate reload drains slow pending saves without losing progress');
+  assert.equal(await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.celebratedDays.length), 1);
+  assert.equal(await status.evaluate(el => el.classList.contains('writing-sessions-celebrate')), false);
+  check('Goal celebration does not repeat after undo, rewriting, sessions, and reloads');
   assert.deepEqual(result.errors, []);
   check('No uncaught renderer errors');
 } catch (error) {

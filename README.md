@@ -11,7 +11,8 @@ The default daily cue is **100 words**. Keep going when you reach it. There are 
 - Click it for session controls, a counting-mode switch, daily totals, and session history.
 - Sessions and progress survive a restart. An unfinished session stays active until you end it.
 - The writing day starts at **04:00 local time**. Writing at 01:00 belongs to the previous day. An active session can span several writing days.
-- Change the daily cue in Settings → Writing Sessions.
+- Change the goal in **Settings → Writing Sessions → Daily word cue**.
+- Reaching the goal briefly pulses the status bar and shows “Daily goal reached!”. It celebrates once per writing day, across sessions and restarts. Reduce Motion keeps the message without movement. Turn it off with **Celebrate daily goal** in the same settings.
 
 ### Counting rules
 
@@ -61,7 +62,7 @@ See [verification](docs/verification.md) for prerequisites and the evidence cove
 
 ## Privacy and storage
 
-No network requests, analytics, account, or cloud service. The plugin's `data.json` saves session timestamps, aggregate word counts per writing day, your target, counting mode, and word ownership metadata: note paths, SHA-256 fingerprints, word positions, and session/day identifiers. Note contents and clipboard text are not saved. Totals and ownership are written together so a completed save describes the same edit.
+No network requests, analytics, account, or cloud service. The plugin's `data.json` saves session timestamps, aggregate word counts per writing day, your target, counting mode, celebration preference and celebrated days, and word ownership metadata: note paths, SHA-256 fingerprints, word positions, and session/day identifiers. Note contents and clipboard text are not saved. Totals and ownership are written together so a completed save describes the same edit.
 
 To follow words through edits and moves, the plugin holds document snapshots and the most recent cut text in memory. Ownership fingerprints use the desktop Node crypto API; this release is desktop-only. Renames performed while the plugin is active update stored paths, including folder renames. Notes renamed while the plugin is closed become baseline on the next start.
 
