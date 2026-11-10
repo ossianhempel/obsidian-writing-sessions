@@ -1,6 +1,6 @@
 {
   "name": "obsidian-writing-sessions",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Manual writing sessions and daily word habits for Obsidian.",
   "license": "MIT",
@@ -9,7 +9,7 @@
     "build": "tsc --noEmit && node esbuild.config.mjs",
     "test": "vitest run",
     "check": "npm run build && npm test",
-    "package": "npm run check && node scripts/package.mjs",
+    "package": "npm run check && node scripts/check-release.mjs && node scripts/package.mjs",
     "smoke": "npm run build && node scripts/smoke.mjs"
   },
   "devDependencies": {

@@ -1,0 +1,54 @@
+name: Check and release
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run package
+      - name: Install isolated Obsidian test binary
+        run: |
+          curl --fail --location --retry 3 https://github.com/obsidianmd/obsidian-releases/releases/download/v1.15.0/Obsidian-1.15.0.AppImage -o "$RUNNER_TEMP/Obsidian.AppImage"
+          echo "1dd8cfb593deaa644101bdb4df65b159ed7985993b6572dd25fd1363459e91cc  $RUNNER_TEMP/Obsidian.AppImage" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/Obsidian.AppImage"
+          cd "$RUNNER_TEMP"
+          ./Obsidian.AppImage --appimage-extract > /dev/null
+      - name: Verify in isolated Obsidian
+        run: xvfb-run --auto-servernum node scripts/smoke.mjs
+        env:
+          OBSIDIAN_BINARY: ${{ runner.temp }}/squashfs-root/obsidian
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm run package
+      - name: Publish versioned Obsidian release
+        run: node scripts/release.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
