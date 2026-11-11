@@ -8,6 +8,21 @@ function sessionAt(now: Date): Data {
 }
 
 describe('04:00 session cutoff', () => {
+  it('preserves pause through reload and still expires at the original cutoff', () => {
+    const data = sessionAt(new Date(2026, 10, 10, 22));
+    data.sessions[0].paused = true;
+    applyCredit(data, { sessionId: 'session', day: '2026-11-10', added: 12, net: 10 });
+    const saved = parseData(JSON.parse(JSON.stringify(data)));
+    expect(activeSession(saved)?.paused).toBe(true);
+    expect(endExpiredSession(saved, new Date(2026, 10, 11, 4))).toBe(true);
+    expect(activeSession(saved)).toBeUndefined();
+    expect(sessionCounts(saved.sessions[0])).toEqual({ added: 12, net: 10 });
+  });
+  it('accepts old sessions without pause state and rejects malformed pause state', () => {
+    const data = sessionAt(new Date(2026, 10, 10, 22));
+    expect(parseData(data).sessions[0].paused).toBeUndefined();
+    expect(() => parseData({ ...data, sessions: [{ ...data.sessions[0], paused: 'yes' }] })).toThrow(/invalid/);
+  });
   it('keeps a session active before 04:00 and ends it exactly at the cutoff', () => {
     const data = sessionAt(new Date(2026, 10, 10, 22));
     applyCredit(data, { sessionId: 'session', day: '2026-11-10', added: 123, net: 110 });

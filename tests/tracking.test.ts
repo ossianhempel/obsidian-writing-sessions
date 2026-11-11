@@ -3,7 +3,7 @@ import { EditorState, StateEffect, StateField, Transaction } from '@codemirror/s
 import { EditorView } from '@codemirror/view';
 import { history, isolateHistory, undo, redo, insertNewline, copyLineDown, moveLineUp, moveLineDown, transposeChars } from '@codemirror/commands';
 import { trackingExtension, wordCount } from '../src/tracking';
-import { activeSession, applyCredit, dailyCounts, endExpiredSession, initialData, parseData, sessionCounts, writingDay, type Data } from '../src/model';
+import { activeSession, countingSession, applyCredit, dailyCounts, endExpiredSession, initialData, parseData, sessionCounts, writingDay, type Data } from '../src/model';
 
 const views: EditorView[] = [];
 afterEach(() => { for (const view of views.splice(0)) view.destroy(); });
@@ -14,7 +14,7 @@ function setup(doc = '') {
   const fileChanged = StateEffect.define<object>();
   const file = StateField.define<object>({ create: () => ({}), update: (value, transaction) => transaction.effects.find(effect => effect.is(fileChanged))?.value ?? value });
   const tracking = trackingExtension(() => {
-    const session = activeSession(data);
+    const session = countingSession(data);
     return session ? { sessionId: session.id, day } : undefined;
   }, credit => applyCredit(data, credit), state => state.field(file));
   function open(text = '', key: object = {}) {
@@ -30,6 +30,34 @@ function setup(doc = '') {
 }
 
 describe('writing credit through editor transactions and real undo history', () => {
+  it('ignores paused typing and resumes counting within the same session', () => {
+    const app = setup();
+    app.edit('counted words');
+    app.data.sessions[0].paused = true;
+    app.edit(' ignored words');
+    expect(app.counts()).toEqual({ added: 2, net: 2 });
+    app.data.sessions[0].paused = false;
+    app.edit(' resumed words');
+    expect(app.counts()).toEqual({ added: 4, net: 4 });
+    expect(app.data.sessions).toHaveLength(1);
+    app.edit('', 'delete.backward', 14, 27);
+    expect(app.counts()).toEqual({ added: 4, net: 2 });
+  });
+  it('keeps undo and redo credit tied to edits across pause boundaries', () => {
+    const app = setup();
+    app.edit('counted words');
+    app.data.sessions[0].paused = true;
+    app.edit(' ignored words');
+    undo(app.view);
+    expect(app.counts()).toEqual({ added: 2, net: 2 });
+    undo(app.view);
+    expect(app.counts()).toEqual({ added: 0, net: 0 });
+    redo(app.view);
+    expect(app.counts()).toEqual({ added: 2, net: 2 });
+    app.data.sessions[0].paused = false;
+    redo(app.view);
+    expect(app.counts()).toEqual({ added: 2, net: 2 });
+  });
   it('counts words, not keystrokes, and continues across pages', () => {
     const app = setup();
     for (const char of 'Hello world') app.edit(char);

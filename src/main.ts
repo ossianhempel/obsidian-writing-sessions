@@ -1,5 +1,5 @@
 import { editorInfoField, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, type App } from 'obsidian';
-import { activeSession, applyCredit, claimGoalCelebration, dailyCounts, endExpiredSession, initialData, nextWritingCutoff, parseData, sessionCounts, writingDay, type Data, type Mode } from './model';
+import { activeSession, applyCredit, claimGoalCelebration, countingSession, dailyCounts, endExpiredSession, initialData, nextWritingCutoff, parseData, sessionCounts, writingDay, type Data, type Mode } from './model';
 import { trackingExtension } from './tracking';
 import { writeQueue } from './storage';
 import { restoreOwnership, saveDocument } from './ownership';
@@ -34,6 +34,18 @@ export default class WritingSessions extends Plugin {
       if (!checking) this.endSession();
       return true;
     } });
+    this.addCommand({ id: 'pause-session', name: 'Pause writing session', checkCallback: checking => {
+      this.expireSession();
+      if (!countingSession(this.data)) return false;
+      if (!checking) this.setPaused(true);
+      return true;
+    } });
+    this.addCommand({ id: 'resume-session', name: 'Resume writing session', checkCallback: checking => {
+      this.expireSession();
+      if (!activeSession(this.data)?.paused) return false;
+      if (!checking) this.setPaused(false);
+      return true;
+    } });
     this.addCommand({ id: 'open-controls', name: 'Open session controls and history', callback: () => this.openControls() });
     this.addCommand({ id: 'toggle-counting-mode', name: 'Toggle words added / net change', callback: () => {
       this.setMode(this.data.mode === 'added' ? 'net' : 'added');
@@ -59,7 +71,7 @@ export default class WritingSessions extends Plugin {
       // Timers may be delayed while the computer sleeps. Expire before deciding
       // whether this editor transaction belongs to an active session.
       this.expireSession();
-      const session = activeSession(this.data);
+      const session = countingSession(this.data);
       return session ? { sessionId: session.id, day: writingDay(new Date()) } : undefined;
     }, credit => {
       if (!credit.added && !credit.net) return;
@@ -98,6 +110,13 @@ export default class WritingSessions extends Plugin {
     const session = activeSession(this.data);
     if (!session) return;
     session.endedAt = new Date().toISOString();
+    this.changed();
+  }
+  setPaused(paused: boolean): void {
+    this.expireSession();
+    const session = activeSession(this.data);
+    if (!session || !!session.paused === paused) return;
+    session.paused = paused;
     this.changed();
   }
   setMode(mode: Mode): void { this.data.mode = mode; this.changed(); }
@@ -147,7 +166,7 @@ export default class WritingSessions extends Plugin {
     const label = mode === 'added' ? 'words added' : 'net words';
     const reached = today >= this.data.target;
     this.status.toggleClass('is-goal-reached', reached);
-    this.status.setText(`${this.celebrating ? 'Daily goal reached! · ' : ''}${session ? `Session: ${sessionCounts(session)[mode]}` : 'Start writing'} · ${reached ? '✓ ' : ''}Today: ${today} / ${this.data.target}${mode === 'net' ? ' net' : ''}${this.saveFailed ? ' · Not saved' : ''}`);
+    this.status.setText(`${this.celebrating ? 'Daily goal reached! · ' : ''}${session ? `${session.paused ? 'Paused' : 'Session'}: ${sessionCounts(session)[mode]}` : 'Start writing'} · ${reached ? '✓ ' : ''}Today: ${today} / ${this.data.target}${mode === 'net' ? ' net' : ''}${this.saveFailed ? ' · Not saved' : ''}`);
     this.status.setAttribute('aria-label', `Writing Sessions. ${reached ? 'Daily goal reached. ' : ''}${label}. ${this.status.textContent}. Open controls and history.`);
     this.status.title = `${label}. Writing day resets at 04:00. Click for controls and history.`;
     for (const listener of this.listeners) listener();
@@ -204,8 +223,20 @@ class SessionModal extends Modal {
     const summary = this.contentEl.createDiv({ cls: 'writing-sessions-summary' });
     const action = new Setting(this.contentEl).setName('Current session');
     action.addButton(button => {
-      button.setCta().onClick(() => activeSession(this.tracker.data) ? this.tracker.endSession() : this.tracker.startSession());
-      this.subscribe(() => button.setButtonText(activeSession(this.tracker.data) ? 'End session' : 'Start session'));
+      button.setCta().onClick(() => {
+        const session = activeSession(this.tracker.data);
+        if (session) this.tracker.setPaused(!session.paused);
+        else this.tracker.startSession();
+      });
+      this.subscribe(() => {
+        const session = activeSession(this.tracker.data);
+        button.setButtonText(session ? session.paused ? 'Resume session' : 'Pause session' : 'Start session');
+      });
+    });
+    action.addButton(button => {
+      button.onClick(() => this.tracker.endSession());
+      this.subscribe(() => { button.buttonEl.hidden = !activeSession(this.tracker.data); });
+      button.setButtonText('End session');
     });
     new Setting(this.contentEl).setName('Show').addDropdown(input => {
       input.selectEl.setAttribute('aria-label', 'Counting mode');
@@ -213,7 +244,7 @@ class SessionModal extends Modal {
         .onChange(value => this.tracker.setMode(value as Mode));
       this.subscribe(() => input.setValue(this.tracker.data.mode));
     });
-    this.contentEl.createEl('p', { cls: 'writing-sessions-hint', text: 'Words added counts new words that remain from this session. Deleting older text leaves it unchanged. Paste earns no new credit; cut and paste transfers existing credit. Net change includes all manual pastes and deletions. Undo reverses changes; redo restores them.' });
+    this.contentEl.createEl('p', { cls: 'writing-sessions-hint', text: 'Pause to write without adding to this session. Resume to continue the same session. Words added counts new words that remain from this session. Deleting older text leaves it unchanged. Paste earns no new credit; cut and paste transfers existing credit. Net change includes all manual pastes and deletions. Undo reverses changes; redo restores them.' });
     const history = this.contentEl.createDiv({ cls: 'writing-sessions-history' });
     this.subscribe(() => {
       const { data } = this.tracker;
@@ -224,7 +255,7 @@ class SessionModal extends Modal {
       summary.createEl('p', { cls: 'writing-sessions-today', text: `${today} / ${data.target} ${data.mode === 'added' ? 'words added' : 'net words'} today` });
       const progress = summary.createEl('progress', { attr: { max: String(data.target), value: String(Math.max(0, today)), 'aria-label': 'Daily writing progress' } });
       progress.setAttribute('aria-valuetext', `${today} of ${data.target} words`);
-      summary.createEl('p', { text: session ? `This session: ${sessionCounts(session)[data.mode]} words · Started ${new Date(session.startedAt).toLocaleString()}` : 'Start a session when you sit down to write.' });
+      summary.createEl('p', { text: session ? `${session.paused ? 'Paused session' : 'This session'}: ${sessionCounts(session)[data.mode]} words · Started ${new Date(session.startedAt).toLocaleString()}` : 'Start a session when you sit down to write.' });
       summary.createEl('small', { text: `Writing day ${day} · Resets at 04:00 local time` });
       history.empty();
       history.createEl('h3', { text: 'Daily history' });
@@ -239,7 +270,7 @@ class SessionModal extends Modal {
         const row = history.createDiv({ cls: 'writing-sessions-history-row' });
         row.createEl('strong', { text: `${sessionCounts(item)[data.mode]} ${data.mode === 'added' ? 'words added' : 'net words'}` });
         row.createEl('span', { text: new Date(item.startedAt).toLocaleString() });
-        row.createEl('small', { text: item.endedAt ? `Ended ${new Date(item.endedAt).toLocaleString()}` : 'In progress' });
+        row.createEl('small', { text: item.endedAt ? `Ended ${new Date(item.endedAt).toLocaleString()}` : item.paused ? 'Paused' : 'In progress' });
       }
     });
   }

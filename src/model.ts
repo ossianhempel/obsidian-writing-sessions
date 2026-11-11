@@ -5,6 +5,7 @@ export interface Session {
   id: string;
   startedAt: string;
   endedAt: string | null;
+  paused?: boolean;
   days: Record<string, Counts>;
 }
 export interface Data {
@@ -29,6 +30,10 @@ export function writingDay(now: Date): string {
 }
 export function activeSession(data: Data): Session | undefined {
   return data.sessions.find(session => session.endedAt === null);
+}
+export function countingSession(data: Data): Session | undefined {
+  const session = activeSession(data);
+  return session?.paused ? undefined : session;
 }
 export function nextWritingCutoff(now: Date): Date {
   const cutoff = new Date(now);
@@ -76,6 +81,7 @@ export function parseData(value: unknown): Data {
       !data.sessions.every(session => session && typeof session.id === 'string' &&
         typeof session.startedAt === 'string' && Number.isFinite(Date.parse(session.startedAt)) &&
         (session.endedAt === null || (typeof session.endedAt === 'string' && Number.isFinite(Date.parse(session.endedAt)))) &&
+        (session.paused === undefined || typeof session.paused === 'boolean') &&
         session.days && typeof session.days === 'object' && !Array.isArray(session.days) &&
         Object.entries(session.days).every(([day, counts]) => /^\d{4}-\d{2}-\d{2}$/.test(day) && validCounts(counts))) ||
       new Set(data.sessions.map(session => session.id)).size !== data.sessions.length ||
