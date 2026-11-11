@@ -1,93 +1,29 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { spawn, execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, copyFile, writeFile, readFile, readdir } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { mkdir, writeFile, readFile, copyFile } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium } from 'playwright-core';
+import { readState, connectInstance } from './control-writing-sessions.mjs';
 
-const root = process.cwd();
 const mod = process.platform === 'darwin' ? 'Meta' : 'Control';
-await mkdir('.verification', { recursive: true });
-const scratch = await mkdtemp(path.join(root, '.verification/run-'));
-const profile = path.join(scratch, 'profile');
-const vault = path.join(scratch, 'Writing Sessions Test');
-const pluginDir = path.join(vault, '.obsidian/plugins/writing-sessions');
-const screenshots = path.join(root, 'docs/screenshots');
-let child;
+const instance = await readState();
+const { pluginDir, evidence } = instance;
+const screenshots = path.join(evidence, 'screenshots');
+await mkdir(screenshots, { recursive: true });
 let browser;
-const result = { archive: null, checks: [], errors: [] };
+let tracing;
+const result = { archive: instance.archive ?? null, checks: [], errors: [], success: false };
 const check = description => { result.checks.push(description); console.log(`PASS ${description}`); };
 try {
-  await mkdir(profile, { recursive: true });
-  await mkdir(pluginDir, { recursive: true });
-  await mkdir(screenshots, { recursive: true });
-  await mkdir('release', { recursive: true });
-  for (const file of ['main.js', 'manifest.json', 'styles.css']) await copyFile(file, path.join(pluginDir, file));
-  await writeFile(path.join(pluginDir, 'data.json'), JSON.stringify({ version: 2, target: 10, mode: 'added', sessions: [], ownership: {} }));
-  await writeFile(path.join(vault, '.obsidian/community-plugins.json'), '["writing-sessions"]');
-  await writeFile(path.join(vault, '.obsidian/core-plugins.json'), '["file-explorer","switcher","command-palette"]');
-  await writeFile(path.join(vault, '.obsidian/app.json'), JSON.stringify({ livePreview: false, showInlineTitle: false, spellcheck: false }));
-  await writeFile(path.join(vault, 'Draft.md'), '');
-  await writeFile(path.join(vault, 'Second note.md'), '');
-  await writeFile(path.join(profile, 'obsidian.json'), JSON.stringify({ vaults: { '1111111111111111': { path: vault, ts: Date.now(), open: true } } }));
-  let archive = process.env.OBSIDIAN_ASAR;
-  if (!archive && process.platform === 'darwin') {
-    const support = path.join(homedir(), 'Library/Application Support/obsidian');
-    const archives = (await readdir(support)).filter(file => /^obsidian-\d+\.\d+\.\d+\.asar$/.test(file));
-    archives.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    let runningVersion;
-    try { runningVersion = execFileSync('obsidian', ['version'], { encoding: 'utf8', timeout: 5000 }).match(/^\d+\.\d+\.\d+/)?.[0]; } catch { /* CLI is optional. */ }
-    const runningArchive = archives.find(file => file === `obsidian-${runningVersion}.asar`);
-    archive = archives.length ? path.join(support, runningArchive ?? archives.at(-1)) : undefined;
-  }
-  if (archive) {
-    result.archive = path.basename(archive);
-    await copyFile(archive, path.join(profile, path.basename(archive)));
-  }
-  const binary = process.env.OBSIDIAN_BINARY ?? '/Applications/Obsidian.app/Contents/MacOS/Obsidian';
-  child = spawn(binary, [`--user-data-dir=${profile}`, '--remote-debugging-port=0', '--no-first-run', ...(process.env.CI ? ['--no-sandbox'] : [])], { detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  let logs = '';
-  child.stdout.on('data', chunk => { logs += chunk; });
-  child.stderr.on('data', chunk => { logs += chunk; });
-  child.on('error', error => { result.errors.push(String(error)); });
-  const deadline = Date.now() + 30_000;
-  let endpoint;
-  while (Date.now() < deadline) {
-    try {
-      const [port] = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n');
-      endpoint = `http://127.0.0.1:${port}`;
-      break;
-    } catch { await new Promise(resolve => setTimeout(resolve, 200)); }
-  }
-  assert.ok(endpoint, `Obsidian did not expose CDP: ${logs.slice(-2000)}`);
-  browser = await chromium.connectOverCDP(endpoint);
-  const context = browser.contexts()[0];
-  let page;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    page = context.pages().find(candidate => candidate.url().includes('index.html'));
-    if (page) break;
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-  assert.ok(page, 'No Obsidian vault window');
-  page.setDefaultTimeout(10_000);
+  const connected = await connectInstance(instance);
+  browser = connected.browser;
+  const { page, context } = connected;
+  tracing = context.tracing;
+  await tracing.start({ screenshots: true, snapshots: true });
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.bringToFront();
-  page.on('pageerror', error => result.errors.push(String(error)));
-  page.on('console', message => { if (message.type() === 'error') console.error('Renderer:', message.text()); });
-  await page.waitForFunction(() => typeof app !== 'undefined' && app.workspace?.layoutReady, null, { timeout: 30_000 });
-  // Fresh vaults may ask whether to trust community plugins. This affects only
-  // the isolated vault, and is the same consent a user gives at installation.
-  const trust = page.getByRole('button', { name: /trust.*enable|turn on community plugins/i });
-  if (await trust.count()) await trust.first().click();
-  // A newly trusted vault opens Community plugins in a separate settings
-  // window. Close that task-owned window so activeWindow is the vault.
-  const status = page.locator('.writing-sessions-status');
-  await status.waitFor({ timeout: 15_000 });
-  if (context.pages().length === 1) await context.waitForEvent('page', { timeout: 2000 }).catch(() => {});
-  for (const auxiliary of context.pages()) if (auxiliary !== page) await auxiliary.close();
-  await page.bringToFront();
   await page.evaluate(() => window.focus());
+  page.on('pageerror', error => result.errors.push(String(error)));
+  const status = page.locator('.writing-sessions-status');
   check('Plugin loads in isolated Obsidian');
   async function openNote(file) {
     // A nav click can leave the previous editor visible during async loading.
@@ -113,6 +49,67 @@ try {
       return totals.added === added && totals.net === net;
     }, { added, net }, { timeout: 5_000 });
   }
+  async function palette(name, prefix = 'Writing Sessions: ') {
+    await page.keyboard.press(`${mod}+p`);
+    await page.locator('.prompt-input').fill(`${prefix}${name}`);
+    let item = page.locator('.suggestion-item').filter({ hasText: name });
+    if (prefix) item = item.filter({ hasText: 'Writing Sessions' });
+    await item.first().click();
+  }
+  // Settings are a separate user entry point: drive it before counting fixtures.
+  await palette('Open settings', '');
+  let settingsPage;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    for (const candidate of context.pages()) {
+      if (await candidate.locator('.vertical-tab-nav-item').filter({ hasText: /^Writing Sessions$/ }).count()) settingsPage = candidate;
+    }
+    if (settingsPage) break;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.ok(settingsPage, 'No Writing Sessions settings tab in owned windows');
+  await settingsPage.bringToFront();
+  await settingsPage.evaluate(() => window.focus());
+  await settingsPage.locator('.vertical-tab-nav-item').filter({ hasText: /^Writing Sessions$/ }).click();
+  const cue = settingsPage.getByRole('textbox', { name: 'Daily word cue', exact: true });
+  await cue.click();
+  await cue.press(`${mod}+a`);
+  await cue.pressSequentially('12', { delay: 100 });
+  assert.equal(await cue.inputValue(), '12');
+  await settingsPage.getByRole('combobox', { name: 'Counting mode', exact: true }).selectOption('net');
+  await settingsPage.locator('[aria-label="Celebrate daily goal"]').click();
+  await settingsPage.screenshot({ path: path.join(screenshots, 'settings.png') });
+  let settingsSaved;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    settingsSaved = JSON.parse(await readFile(path.join(pluginDir, 'data.json'), 'utf8'));
+    if (settingsSaved.target === 12 && settingsSaved.mode === 'net' && settingsSaved.celebrateGoal === false) break;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(settingsSaved.target, 12);
+  assert.equal(settingsSaved.mode, 'net');
+  assert.equal(settingsSaved.celebrateGoal, false);
+  await writeFile(path.join(evidence, 'settings-data.json'), JSON.stringify(settingsSaved, null, 2));
+  await cue.click();
+  await cue.press(`${mod}+a`);
+  await cue.pressSequentially('10', { delay: 100 });
+  assert.equal(await cue.inputValue(), '10');
+  await settingsPage.getByRole('combobox', { name: 'Counting mode', exact: true }).selectOption('added');
+  await settingsPage.locator('[aria-label="Celebrate daily goal"]').click();
+  if (settingsPage === page) await page.keyboard.press('Escape');
+  else await settingsPage.close();
+  await page.bringToFront();
+  check('Settings UI changes cue, mode, and celebration and persists all three values');
+  await palette('Open session controls and history');
+  await page.getByRole('button', { name: 'Start session', exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await palette('Start writing session');
+  await palette('Pause writing session');
+  await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('Paused: 0'));
+  await palette('Resume writing session');
+  await palette('End writing session');
+  await palette('Toggle words added / net change');
+  await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('/ 10 net'));
+  await palette('Toggle words added / net change');
+  check('Command palette opens controls, starts, pauses, resumes, ends, and toggles mode');
   await status.click();
   await page.getByRole('button', { name: 'Start session', exact: true }).click();
   await page.keyboard.press('Escape');
@@ -199,11 +196,11 @@ try {
   let saved;
   for (let attempt = 0; attempt < 50; attempt++) {
     try { saved = JSON.parse(await readFile(path.join(pluginDir, 'data.json'), 'utf8')); } catch { /* Wait for initial save. */ }
-    if (saved?.sessions.length === 2 && Object.values(saved.sessions[1].days).some(counts => counts.added === 2)) break;
+    if (saved?.sessions.length === 3 && Object.values(saved.sessions[2].days).some(counts => counts.added === 2)) break;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  assert.equal(saved.sessions.length, 2);
-  assert.equal(saved.sessions[1].endedAt, null);
+  assert.equal(saved.sessions.length, 3);
+  assert.equal(saved.sessions[2].endedAt, null);
   const ownershipInputs = await page.evaluate(async () => {
     const data = app.plugins.plugins['writing-sessions'].data;
     return Promise.all(Object.entries(data.ownership).map(async ([path, record]) => ({
@@ -268,6 +265,53 @@ try {
   assert.equal(await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.celebratedDays.length), 1);
   assert.equal(await status.evaluate(el => el.classList.contains('writing-sessions-celebrate')), false);
   check('Goal celebration does not repeat after undo, rewriting, sessions, and reloads');
+  const sessionBeforePause = await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.sessions.at(-1).id);
+  await status.click();
+  await page.getByRole('button', { name: 'Pause session', exact: true }).click();
+  await page.getByRole('button', { name: 'Resume session', exact: true }).waitFor();
+  await page.screenshot({ path: path.join(screenshots, 'session-paused-dark.png') });
+  await page.evaluate(() => app.changeTheme('moonstone'));
+  await page.waitForFunction(() => document.body.classList.contains('theme-light'));
+  await page.screenshot({ path: path.join(screenshots, 'session-paused.png') });
+  await page.keyboard.press('Escape');
+  await openNote('Paused note.md');
+  await editor();
+  await page.keyboard.type('These words are not counted.');
+  await counts(17, 23);
+  await page.keyboard.press(`${mod}+z`);
+  await counts(17, 23);
+  await page.keyboard.press(`${mod}+Shift+z`);
+  await counts(17, 23);
+  await page.evaluate(async () => {
+    await app.plugins.disablePlugin('writing-sessions');
+    await app.plugins.enablePlugin('writing-sessions');
+  });
+  await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('Paused: 4'));
+  await counts(17, 23);
+  const commandAvailable = id => page.evaluate(id => app.commands.commands[`writing-sessions:${id}`].checkCallback(true), id);
+  assert.equal(await commandAvailable('start-session'), false);
+  assert.equal(await commandAvailable('pause-session'), false);
+  assert.equal(await commandAvailable('resume-session'), true);
+  assert.equal(await commandAvailable('end-session'), true);
+  await status.click();
+  await page.getByRole('button', { name: 'Resume session', exact: true }).click();
+  await page.getByRole('button', { name: 'Pause session', exact: true }).waitFor();
+  await page.screenshot({ path: path.join(screenshots, 'session-resumed.png') });
+  await page.keyboard.press('Escape');
+  await editor();
+  await page.keyboard.press(`${mod}+End`);
+  await page.keyboard.type(' Count again.');
+  await counts(19, 25);
+  assert.equal(await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.sessions.at(-1).id), sessionBeforePause);
+  // Remove only the resumed writing to keep the later cutoff checks independent.
+  for (let char = 0; char < ' Count again.'.length; char++) await page.keyboard.press('Shift+ArrowLeft');
+  await page.keyboard.press('Backspace');
+  await counts(17, 23);
+  await page.evaluate(() => app.commands.executeCommandById('writing-sessions:pause-session'));
+  assert.equal(await commandAvailable('resume-session'), true);
+  await page.evaluate(() => app.commands.executeCommandById('writing-sessions:resume-session'));
+  assert.equal(await commandAvailable('pause-session'), true);
+  check('Pause ignores typing and its undo/redo, survives reload, and resumes the same session via UI and commands');
   // Move only Date in this disposable renderer; timers keep running normally.
   const cutoff = await page.evaluate(() => {
     const date = new Date();
@@ -285,6 +329,7 @@ try {
   await page.keyboard.press(`${mod}+End`);
   await page.keyboard.type(' Before cutoff.');
   await counts(19, 25);
+  await page.evaluate(() => app.commands.executeCommandById('writing-sessions:pause-session'));
   await page.clock.setFixedTime(cutoff);
   await page.waitForFunction(() => {
     const plugin = app.plugins.plugins['writing-sessions'];
@@ -294,7 +339,7 @@ try {
   assert.equal(await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.sessions.at(-1).endedAt), new Date(cutoff).toISOString());
   await page.keyboard.type(' After cutoff.');
   await counts(19, 25);
-  check('04:00 timer ends the session, resets today, and stops counting until manual start');
+  check('04:00 timer ends a paused session, resets today, and stops counting until manual start');
   await status.click();
   await page.getByRole('button', { name: 'Start session', exact: true }).click();
   await page.keyboard.press('Escape');
@@ -314,6 +359,7 @@ try {
   await status.click();
   await page.getByRole('button', { name: 'Start session', exact: true }).click();
   await page.keyboard.press('Escape');
+  await page.evaluate(() => app.commands.executeCommandById('writing-sessions:pause-session'));
   const followingCutoff = await page.evaluate(() => {
     const date = new Date(); date.setDate(date.getDate() + 1); date.setHours(4, 0, 0, 0); return date.getTime();
   });
@@ -326,27 +372,38 @@ try {
   assert.equal(await page.evaluate(() => app.plugins.plugins['writing-sessions'].data.sessions.at(-1).endedAt), new Date(followingCutoff).toISOString());
   await page.waitForFunction(() => document.querySelector('.writing-sessions-status')?.textContent.includes('Start writing · Today: 0 / 10'));
   check('Reload after a missed cutoff closes the saved session at 04:00 and keeps history');
+  let finalSaved;
+  for (let attempt = 0; attempt < 50; attempt++) {
+    finalSaved = JSON.parse(await readFile(path.join(pluginDir, 'data.json'), 'utf8'));
+    if (finalSaved.sessions.at(-1).endedAt === new Date(followingCutoff).toISOString()) break;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.equal(finalSaved.sessions.at(-1).endedAt, new Date(followingCutoff).toISOString());
+  await writeFile(path.join(evidence, 'data.json'), JSON.stringify(finalSaved, null, 2));
   assert.deepEqual(result.errors, []);
   check('No uncaught renderer errors');
+  result.success = true;
 } catch (error) {
   const failedPage = browser?.contexts()[0]?.pages().find(page => page.url().includes('index.html'));
   if (failedPage) {
     console.error((await failedPage.locator('body').innerText()).slice(0, 2500));
-    await failedPage.screenshot({ path: path.join(root, 'release/failure.png') }).catch(() => {});
+    await writeFile(path.join(evidence, 'failure.aria.txt'), await failedPage.locator('body').ariaSnapshot());
+    await failedPage.screenshot({ path: path.join(evidence, 'failure.png') }).catch(() => {});
   }
   throw error;
 } finally {
-  await browser?.close().catch(() => {});
-  if (child?.pid && child.exitCode === null) {
-    const signal = value => {
-      try { process.kill(-child.pid, value); } catch (error) { if (error.code !== 'ESRCH') throw error; }
-    };
-    signal('SIGTERM');
-    await Promise.race([new Promise(resolve => child.once('exit', resolve)), new Promise(resolve => setTimeout(resolve, 5000))]);
-    if (child.exitCode === null) signal('SIGKILL');
+  if (browser) {
+    const page = browser.contexts()[0]?.pages().find(page => page.url().includes('index.html'));
+    if (page) {
+      await writeFile(path.join(evidence, 'notes.json'), JSON.stringify(await page.evaluate(async () => {
+        const files = app.vault.getMarkdownFiles();
+        return Promise.all(files.map(async file => ({ path: file.path, text: await app.vault.read(file) })));
+      }), null, 2)).catch(() => {});
+    }
+    await copyFile(path.join(pluginDir, 'data.json'), path.join(evidence, 'data.json')).catch(() => {});
   }
-  if (process.platform === 'darwin') execFileSync('/usr/bin/trash', [scratch]);
-  else { const { rm } = await import('node:fs/promises'); await rm(scratch, { recursive: true, force: true }); }
-  await writeFile(path.join(root, 'release/smoke-result.json'), JSON.stringify(result, null, 2) + '\n');
-  console.log('Stopped isolated Obsidian and removed its profile/vault. Screenshots retained.');
+  await tracing?.stop({ path: path.join(evidence, 'trace.zip') }).catch(() => {});
+  await browser?.close().catch(() => {});
+  await writeFile(path.join(evidence, 'smoke-result.json'), JSON.stringify(result, null, 2) + '\n');
+  console.log(`Evidence retained: ${evidence}. Run ./scripts/control-writing-sessions stop to clean up.`);
 }

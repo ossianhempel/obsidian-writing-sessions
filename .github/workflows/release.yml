@@ -29,7 +29,7 @@ jobs:
           cd "$RUNNER_TEMP"
           ./Obsidian.AppImage --appimage-extract > /dev/null
       - name: Verify in isolated Obsidian
-        run: xvfb-run --auto-servernum node scripts/smoke.mjs
+        run: xvfb-run --auto-servernum npm run smoke
         env:
           OBSIDIAN_BINARY: ${{ runner.temp }}/squashfs-root/obsidian
   release:

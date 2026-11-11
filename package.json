@@ -8,9 +8,10 @@
     "dev": "node esbuild.config.mjs --watch",
     "build": "tsc --noEmit && node esbuild.config.mjs",
     "test": "vitest run",
-    "check": "npm run build && npm test",
+    "check": "npm run verify:map && npm run build && npm test",
     "package": "npm run check && node scripts/check-release.mjs && node scripts/package.mjs",
-    "smoke": "npm run build && node scripts/smoke.mjs"
+    "smoke": "./scripts/control-writing-sessions smoke",
+    "verify:map": "./scripts/control-writing-sessions map --check"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.10.0",
